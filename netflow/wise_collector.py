@@ -197,6 +197,12 @@ def get_export_packets(host: str, port: int) -> ParsedPacket:
 def filename(epoch): 
     return "{}.gz".format(epoch)
 
+def cidr_blocks_from_request(response): 
+    cidr_blocks = []
+    for data in response.json(): 
+        cidr_blocks.append(data["ip_range"])
+    return cidr_blocks
+
 def in_cidr_block(ip, cidr_blocks): 
     for cidr in cidr_blocks: 
         if ipaddress.ip_address(ip) in ipaddress.ip_network(cidr): 
@@ -223,16 +229,16 @@ if __name__ == "__main__":
 
     try:
         import configparser
-        duration_of_cut = 20
+        duration_of_cut = 300
         current_epoch = int(time.time())
         in_duration_epoch = current_epoch + duration_of_cut 
         config = configparser.ConfigParser()
         config.read('zerver.collector.ini') 
-
-        cidr_blocks = []
+        response = requests.get(config['WiseCritical']['FilterUrl'], headers={'Authorization': config['Customer']['AuthToken']})
+        data = response.json()
+        cidr_blocks = cidr_blocks_from_request(response)
         if len(cidr_blocks) == 0: 
             logger.info("Please add CIDR Blocks in the dashboard to start processing data")
-
         for ts, client, export in get_export_packets(args.host, args.port):
             try: 
                 flows = [] 
@@ -249,7 +255,7 @@ if __name__ == "__main__":
                     if os.path.exists(filename(current_epoch)): 
                         files = {'file': open(filename(current_epoch),'rb')}
                         data = {'clientId': config['Customer']['ID']}
-                        headers = {'WISE_CRITICAL_AUTH_TOKEN': config['Customer']['AUTH_TOKEN']}
+                        headers = {'Authorization': config['Customer']['AuthToken']}
                         r = requests.post(config['WiseCritical']['ZerverUrl'], files=files, data=data, headers=headers)
                         for i in range(0, 3):
                             if( r.status_code == 200):
@@ -257,7 +263,11 @@ if __name__ == "__main__":
                             else:
                                 time.sleep(i+1)
                                 r = requests.post(config['WiseCritical']['ZerverUrl'], files=files, data=data)
+      
                         os.remove(filename(current_epoch))
+                        response = requests.get(config['WiseCritical']['FilterUrl'], headers={'Authorization': config['Customer']['AuthToken']})
+                        if response.status_code == 200: 
+                            cidr_blocks = cidr_blocks_from_request(response)
                     current_epoch = int(time.time())
                     in_duration_epoch = current_epoch + duration_of_cut 
                 if len(flows) > 0: 
